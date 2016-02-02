@@ -1,0 +1,137 @@
+#!/usr/bin/env perl
+
+use strict;
+
+my $in = "";
+my $flag_connect = 1;	# 0: nothing, 1: delete connect
+my $flag_resnum = 1;	# 0: nothing, 1: rearrange residue number
+my $flag_atomnum = 1;	# 0: nothing, 1: rearrange atom number
+foreach my $arg(@ARGV){
+	if(($arg =~ /^-h$/i) || ($arg =~ /^--help$/i)){
+		&help;
+		exit;
+	}
+	elsif(($arg =~ /^-c$/i) || ($arg =~ /^--connect$/i)){
+		$flag_connect = 0;
+	}
+	elsif(($arg =~ /^-r$/i) || ($arg =~ /^--reisude$/i)){
+		$flag_resnum = 0;
+	}
+	elsif(($arg =~ /^-a$/i) || ($arg =~ /^--atom$/i)){
+		$flag_atomnum = 0;
+	}
+	else{
+		$in = $arg;
+	}
+}
+
+&check_flag("ATOM    reorder", $flag_atomnum)
+&check_flag("RESIDUE reorder", $flag_resnum);
+&check_flag("CONNECT disable", $flag_connect);
+&check_file($in);
+
+my @cations = ("Li", "Na", "K", "Rb", "Cs");
+my @atnions = ("F", "Cl", "Br", "I");
+my $save_atomNum = 0;
+my $save_resNum = 1;
+my $save_resInfo = "";
+
+open(IN, $in);
+while(my $line = <IN>){
+	if($line =~ /^((ATOM)|(HETATM))/){
+		chomp($line);
+		$save_atomNum ++;
+		my $data = substr($line, 0, 54);
+		$line = $data;								# update data (delete data after coordinate)
+
+		my $atom = substr($line, 12, 2);
+		$atom =~ s/[\d\s]//;
+		if(grep{$atom eq $_} @cations){				# update cation
+			$atom .= "+ ";
+			substr($line, 12, 4);
+		}
+		elsif(grep{$atom eq $_} @cations){			# update anion
+			$atom .= "- ";
+			substr($line, 12, 4);
+		}
+
+		if($flag_atomnum == 1){						# update atom number
+			my $atomNum = substr($line, 6, 5);
+			substr($line, 6, 5) = &adjust(5, $atomNum);
+		}
+
+		if($flag_resnum == 1){						# update residue number
+			my $resInfo = substr($line, 18, 9);
+			if($resInfo ne $save_resInfo){
+				if($save_resInfo ne ""){
+					$save_resNum ++;
+				}
+				$save_resInfo = $resInfo;
+			}
+			substr($line, 22, 4) = &adjust(4, $save_resNum);
+		}
+
+		print $line, "\n";
+	}
+	elsif($line =~ /^TER/){
+		$save_resNum ++;
+		print "TER\n";
+	}
+	elsif(($flag_connect == 1) && ($line =~ /^CONECT/)){
+		next;
+	}
+	else{
+		print $line;
+	}
+}
+close(IN);
+
+
+# ========== check_flag ========== #
+sub check_flag(){
+	my $title = shift(@_);
+	my $value = shift(@_);
+
+	print STDERR " $title: ";
+	if($value == 1){
+		print STDERR "ON\n";
+	}
+	else{
+		print STDERR "OFF\n";
+	}
+}
+
+# ========== check_file ========== #
+sub check_file(){
+	my $file = shift(@_);
+
+	if(! -f $file){
+		print STDERR "ERROR: No such file ($file)\n";
+		exit;
+	}
+}
+
+# ========== adjust ========== #
+sub adjust{
+	my $max = shift(@_);	# 調整後文字数
+	my $line = shift(@_);	# 文字列
+
+	my $space = length($line);	# 文字列の長さ
+	$space = $max - $space;		# 追加するスペース数
+	$space = " " x $space;			# スペース
+	$line = $space . $line;		# スペース追加
+	return($line);
+}
+
+# ========== help ========== #
+sub help(){
+print << "HELP";
+ \$ clearpdb [OPTION] PDB_FILE > OUTPUT_PDB
+
+  OPTION
+   -a, --atom     Disable atom reorder
+   -r, --residue  Disable residue reorder
+   -c, --connect  Disable connect disable
+
+HELP
+}
