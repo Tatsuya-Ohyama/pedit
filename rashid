@@ -1,0 +1,865 @@
+#! /usr/bin/perl
+
+###########################################################################
+##
+## PDB部分削除プログラム					Last Update 2016/04/22
+##	 PDBを部分的に削除します
+##  * PDBの内容を簡易表示する
+##    $ rashid --view 表示列数 入力ファイル
+##  *PDBの電荷や水分子数を調べる
+##    $ rashid --info 入力ファイル
+##	* 原子指定削除
+##    $ rashid --atom 原子記号 入力ファイル 出力ファイル
+##  * 原子順序番号指定削除
+##    $ rashid --atomnumber 原子順序（範囲指定可能） 入力ファイル 出力ファイル
+##	*残基順序番号指定削除
+##	  $ rashid --residuenumber 残基順序(範囲指定可能) 入力ファイル 出力ファイル
+##  * 残基指定削除
+##    $ rashid --residue 残基名 入力ファイル 出力ファイル
+##  * 詳細原子指定削除
+##    $ rashid --detailatom 原子名 入力ファイル 出力ファイル
+##  * 詳細残基指定削除
+##    $ rashid --detailresidue 残基名.残基番号 入力ファイル 出力ファイル
+##  * ユニット指定削除
+##    $ rashid --unit ユニット名 入力ファイル 出力ファイル
+##      *** 入力ファイルの引数を入出力ファイルにすると上書き可能
+##
+###########################################################################
+
+use strict;
+use File::Temp;
+
+my $option = shift(@ARGV);
+my $select = shift(@ARGV);
+my $in = shift(@ARGV);
+my $out = shift(@ARGV);
+
+if(($option =~ /^--help$/i) || ($option =~ /^-h$/i)){
+	&help;
+	exit;
+}
+elsif(($option =~ /^--information$/i) || ($option =~ /^-I$/i)){
+	if($select !~ /^$/){
+		if(-f $select){
+			&info($select);
+			exit;
+		}
+		else{
+			print " ERROR: 指定された入力ファイルは存在しません．\n";
+		}
+	}
+	else{
+		print " ERROR: 入力ファイルを指定してください．\n";
+	}
+}
+
+if($in !~ /^$/){
+	if(-f $in){
+		my $tmp1 = File::Temp->new(TEMPLATE => '.rashid-1XXXXXX');
+		my $tmp2 = File::Temp->new(TEMPLATE => '.rashid-2XXXXXX');
+		$SIG{'TERM'} = $SIG{'PIPE'} = $SIG{'HUP'} = $SIG{'INT'} = sub {
+			unlink $tmp1;
+			unlink $tmp2;
+			exit;
+		};	# プログラムが中断した場合の処理
+
+		if(($option =~ /^--view$/i) || ($option =~ /^-V$/i)){
+			&view($select, $in);
+			exit;
+		}
+		elsif(($option =~ /^--atomnumber$/i) || ($option =~ /^-AN$/i)){
+			&atomorder($select, $in, $tmp1);
+		}
+		elsif(($option =~ /^--residuenumber$/i) || ($option =~ /^-RN$/i)){
+			&residueorder($select, $in, $tmp1);
+		}
+		elsif(($option =~ /^--atom$/i) || ($option =~ /^-A$/i)){
+			&atom($select, $in, $tmp1);
+		}
+		elsif(($option =~ /^--residue$/i) || ($option =~ /^-R$/i)){
+			&residue($select, $in, $tmp1);
+		}
+		elsif(($option =~ /^--unit$/i) || ($option =~ /^-U$/i)){
+			if($select =~ /^none$/i){
+				$select = " ";
+			}
+			&unit($select, $in, $tmp1);
+		}
+		elsif(($option =~ /^--detailresidue$/) || ($option =~ /^-DR$/i)){
+			my @check = split(/,/, $select);
+			my $checkflag = 0;
+			foreach(@check){
+				if($_ !~ /^.+\..+$/){
+					$checkflag = 1;
+					last;
+				}
+			}
+			undef @check;
+			if($checkflag == 1){
+				print " ERROR: 指定残基の表現が違います．[残基名.残基番号]で指定する．\n";
+				exit;
+			}
+			else{
+				&detailresidue($select, $in, $tmp1);
+			}
+		}
+		elsif(($option =~ /^--detailatom$/) || ($option =~ /^-DA$/i)){
+			&detailatom($select, $in, $tmp1);
+		}
+		else{
+			print " ERROR: 未定義のオプションです．\n";
+			exit;
+		}
+		&terdel($tmp1, $tmp2);
+		&cleanatom($tmp2, $tmp1);
+#		&crecone($tmp1, $tmp2, 1.9);
+		if($out =~ /^$/){
+			print " INFORMATION: 出力先が指定されていません．\n";
+			print " INFORMATION: 上書き(O)，別名で保存(S)，何もしない(C)\n > ";
+			my $user = <STDIN>;
+			$user =~ s/\n//;
+			if($user =~ /^O$/i){
+				unlink $in;
+				rename $tmp1, $in;
+			}
+			elsif($user =~ /^S$/i){
+				print " ファイル名: ";
+				$user = <STDIN>;
+				$user =~ s/\n//;
+				rename $tmp1, $user;
+			}
+			else{
+				exit;
+			}
+		}
+		else{
+			rename $tmp2, $out;
+		}
+	}
+	else{
+		print " ERROR: 指定された入力ファイルは存在しません．\n";
+	}
+}
+else{
+	if(($option =~ /^--view$/i) || ($option =~ /^-V$/i)){
+		print " ERROR: 表示する列数を入力してください．\n";
+	}
+	else{
+		print " ERROR: 入力ファイルを指定してください．\n";
+	}
+}
+exit;
+
+# =============== view =============== #
+## VIEWモード
+sub view{
+my $column = shift(@_);		# 列数
+my $in = shift(@_);			# 入力ファイル
+
+my $residue1 = "";	# 現在の残基名
+my $residue2 = "";	# 前の行の残基名
+my $atom1 = "";
+my $atom2 = "";
+my $start = 0;			# 最初の処理のためのブランク処理フラグ
+my $ncolumn = 0;		# 現在の列数
+my $lastatom = 0;
+open(IN, "$in");
+while(<IN>){
+	if((/^atom/i) || (/^hetatm/i)){
+		my $before = $lastatom;			# 前回の原子順序番号
+		$lastatom = substr($_, 6, 5);	# 現在の原子順序番号
+		$residue1 = substr($_, 17, 9);	# 現在の残基名
+		if($residue1 eq $residue2){	# 残基名同じだったら何もしない
+			next;
+		}
+		elsif($start == 0){		# 最初のブランク処理
+			$residue2 = substr($_, 17, 9);	# 記憶すべき残基名
+			$atom1 = substr($_, 6, 5);	# 開始原子順序番号
+			$atom1 =~ s/\s//g;
+			$start = 1;
+			print " ";
+		}
+		else{
+			$atom2 = $before;		# 前回の原子順序番号が必要
+			$atom1 = &adjust1(5, $atom1);	# 開始原子順序番号
+			$atom2 = &adjust1(5, $atom2);	# 終了原子順序番号
+			print "$atom1 - $atom2:$residue2";
+			$atom1 = $lastatom;	# 開始原子順序番号に現在の原子順序番号を
+			$residue2 = substr($_, 17, 9);	# 現在の残基名を記憶
+			$ncolumn++;			# 列数を増やす
+			if($ncolumn >= $column){	# 指定列数に達したら改行
+				print "\n ";
+				$ncolumn = 0;
+			}
+			else{
+				print " | ";	# それ以外は区切るだけ
+			}
+		}
+	}
+}
+close(IN);
+
+$atom2 = $lastatom;		# ファイル読み込み後に残ったデータ処理
+$atom1 = &adjust1(5, $atom1);
+$atom2 = &adjust1(5, $atom2);
+print "$atom1 - $atom2:$residue2\n";
+}
+
+# =============== info =============== #
+## 系の情報を調べる
+sub info{
+my $in = shift(@_);
+
+my %charge_residues = (	#  電荷情報
+	"LYS" => "1",
+	"ARG" => "1",
+	"ASP" => "-1",
+	"GLU" => "-1",
+	"HIP" => "1",
+	"CYM" => "1",
+	"Na" => "1",	# Na+
+	"K" => "1",		# K+
+	"Zn" => "2",	# Zn+
+	"ZIN" => "2",	# Zn+
+	"Ca" => "2",	# Ca+
+	"CAL" => "2",	# Ca+
+	"DA" => "-1",
+	"DG" => "-1",
+	"DC" => "-1",
+	"DT" => "-1",
+	"DA3" => "-1",
+	"DG3" => "-1",
+	"DC3" => "-1",
+	"DT3" => "-1",
+	"RA" => "-1",
+	"RG" => "-1",
+	"RC" => "-1",
+	"RU" => "-1",
+	"RA3" => "-1",
+	"RG3" => "-1",
+	"RC3" => "-1",
+	"RU3" => "-1"
+);
+my @noncharge_residues = (
+	"ACE", "ALA", "ASN", "CYS", "GLN", "GLY", "HIS", "HID", "HIE", "ILE",
+	"LEU", "MET", "NME", "PHE", "PRO", "SER", "THR", "TRP", "TYR", "VAL",
+	"SOL", "HOH", "WAT", "DT5", "DA5", "DC5", "DG5", "RU5", "RA5", "RC5", "RG5"
+);
+
+my $resnum = 0;
+my $atomnum = 0;
+my $charge = 0;
+my $water = 0;
+my $residue1 = "";
+my $start = 0;
+my @unknowns = ();
+my @hiss = (0, 0, 0, 0);	# His の状態(HIS, HID, HIE, HIP)
+open(IN, "$in");
+while(<IN>){
+	if((/^HETATM/i) || (/^ATOM/)){
+		$atomnum ++;	#  原子数+1
+		my $residue2 = substr($_, 17, 9);	#  現在の残基情報
+		if($residue1 ne $residue2){	#  前の残基情報と一致しない場合(残基が変わった場合)
+			$resnum ++;	#  残基数+1
+			if($residue2 =~ /^HI(S|D|E|P)/i){
+				if($residue2 =~ /^HIS/i){
+					$hiss[0] ++;
+				}
+				elsif($residue2 =~ /^HID/i){
+					$hiss[1] ++;
+				}
+				elsif($residue2 =~ /^HIE/i){
+					$hiss[2] ++;
+				}
+				elsif($residue2 =~ /^HIP/i){
+					$hiss[3] ++;
+				}
+				else{
+					print " WARNING: Unknown His exists\n";
+				}
+			}
+			if(($residue2 =~ /^WAT/i) || ($residue2 =~ /^HOH/i) || ($residue2 =~ /^SOL/i)){	#  残基名が WAT あるいは HOH の場合
+				$water ++;	#  水分子数+1
+			}
+			if($start == 0){	#  最初の残基の異なりは無効
+				$start = 1;	#  フラグを通常に戻す
+				$residue1 = $residue2;	#  現在の残基情報を前の残基情報として登録
+				next;
+			}
+			else{	#  通常状態
+				$residue1 = substr($residue1, 0, 3);	#  残基名のみ取得
+				$residue1 =~ s/\s+//g;
+				$residue1 =~ s/[\+\*\/]//g;	#  + や *，/は _ に変換
+				my @data = keys(%charge_residues);	#  電荷情報からキーを配列に格納
+				my $charge_flag = 0;
+				foreach(@data){
+					if($residue1 =~ /^$_$/i){	#  キーが一致した場合
+						$charge += $charge_residues{$_};	#  キーの値(電荷)を現在の電荷に加算
+						$charge_flag = 1;
+						last;
+					}
+				}
+				if(($charge_flag == 0) && (grep(/^$residue1$/, @noncharge_residues) == 0)){
+					push(@unknowns, $residue1);
+				}
+				$residue1 = $residue2;	#  現在の残基を前の残基として登録
+			}
+		}
+	}
+}
+close(IN);
+
+$residue1 = substr($residue1, 0, 3);	#  ループできなかった情報の処理	#  残基名のみ取得
+$residue1 =~ s/[\+\*\/]/_/g;	#  + や *，/は _ に変換
+my @data = keys(%charge_residues);	#  電荷情報からキーを配列に格納
+my $charge_flag = 0;
+foreach(@data){
+	if($residue1 =~ /^$_$/i){	#  キーが一致した場合
+		$charge += $charge_residues{$_};	#  キーの値(電荷)を現在の電荷に加算
+		$charge_flag = 1;
+		last;
+	}
+}
+if(($charge_flag == 0) && (grep(/^$residue1$/, @noncharge_residues) == 0)){
+	push(@unknowns, $residue1);
+}
+
+my $unknown_residue = join(" + ", @unknowns);
+if($#unknowns != -1){
+	$unknown_residue = " + " . $unknown_residue;
+}
+
+my $notwater = $resnum - $water;
+print << "INFO";
+ INFORMATION for $in
+   All of Atom          : $atomnum
+   All of Residue       : $resnum
+    * Not water molecule: $notwater
+    * Water molecule    : $water
+   System charge        : $charge $unknown_residue
+
+   HIS : HID : HIE: HIP = $hiss[0] : $hiss[1] : $hiss[2] : $hiss[3]
+
+INFO
+}
+
+# =============== atom =============== #
+## 原子指定モード
+sub atom{
+my $atom = shift(@_);
+my $in = shift(@_);
+my $out = shift(@_);
+
+my @atoms = split(/,/, $atom);
+
+open(IN, "$in");
+open(OUT, "> $out");
+while(<IN>){
+	if((/^ATOM/i) || (/^HETATM/i)){
+		my $line = $_;
+		my $flag = 0;
+		my $nowatom = substr($_, 12, 2);	# 原子名取得
+		$nowatom =~ s/\d//g;
+		$nowatom =~ s/\'//g;
+		$nowatom =~ s/\s+//g;
+		foreach(@atoms){
+			if($nowatom eq $_){	# 照らし合わせ
+				$flag = 1;
+				last;
+			}
+		}
+		if($flag == 0){
+			print OUT $line;
+		}
+	}
+	elsif(/^TER/){
+		print OUT "TER\n";
+	}
+}
+close(IN);
+close(OUT);
+}
+
+# =============== detailatom =============== #
+## 詳細原子指定モード
+sub detailatom{
+my $atom = shift(@_);
+my $in = shift(@_);
+my $out = shift(@_);
+
+my @atoms = split(/,/, $atom);
+
+open(IN, "$in");
+open(OUT, "> $out");
+while(<IN>){
+	if((/^ATOM/i) || (/^HETATM/i)){
+		my $line = $_;
+		my $flag = 0;
+		my $nowatom = substr($_, 12, 4);	# 詳細原子名取得
+		$nowatom =~ s/\s//g;
+		foreach(@atoms){
+			if($nowatom =~ /^$_$/){	# 照らし合わせ
+				$flag = 1;
+				last;
+			}
+		}
+		if($flag == 0){
+			print OUT $line;
+		}
+	}
+	elsif(/^TER/){
+		print OUT "TER\n";
+	}
+}
+close(IN);
+close(OUT);
+}
+
+# =============== residue =============== #
+## 残基指定モード
+sub residue{
+my $residue = shift(@_);
+my $in = shift(@_);
+my $out = shift(@_);
+
+my @residues = split(/,/, $residue);
+
+open(IN, "$in");
+open(OUT, "> $out");
+while(<IN>){
+	if((/^ATOM/i) || (/^HETATM/i)){
+		my $line = $_;
+		my $flag = 0;
+		my $nowres = substr($_, 17, 3);	# 残基名取得
+		foreach(@residues){
+			if($nowres eq $_){	# 照らし合わせ
+				$flag = 1;
+				last;
+			}
+		}
+		if($flag == 0){
+			print OUT $line;
+		}
+		else{
+			print OUT "TER\n";	# 消した後にはTERを
+		}
+	}
+	elsif(/^TER/){
+		print OUT "TER\n";
+	}
+}
+close(IN);
+close(OUT);
+}
+
+# =============== atomorder =============== #
+## 原子順序指定モード
+sub atomorder{
+my $atomrange = shift(@_);
+my $in = shift(@_);
+my $out = shift(@_);
+
+my @atomorder = &range($atomrange);	# 範囲指定を分解
+
+my $infinity = 0;	# 無限までか？
+my $check = pop(@atomorder);
+if($check == -1){	# rangeルーチンで無限まで続くのなら-1が返されているはず
+	$infinity = 1;
+}
+else{
+	push(@atomorder, $check);	# 配列の最後を取り出したから元に戻す
+}
+
+@atomorder = sort {$a <=> $b} (@atomorder);	# ソート
+
+my $find = 0;	# 指定された原子か？
+open(IN, "$in");
+open(OUT, "> $out");
+while(<IN>){
+	if((/^ATOM/i) || (/^HETATM/i)){
+		my $line = $_;
+		my $nowatomorder = substr($_, 6, 5);	# 原子順序番号取得
+		$nowatomorder =~ s/\s+//g;
+		if(($infinity == 1) && ($nowatomorder >= $atomorder[0])){	# 無限かつ指定された原子より大きければ，消去し，TERを
+			print OUT "TER\n";
+			next;
+		}
+		else{
+			my $find = 0;
+			foreach(@atomorder){	# 範囲内に現在の原子順序があるか
+				if($_ == $nowatomorder){
+					$find = 1;
+					last;
+				}
+			}
+			if($find == 0){	# 指定されたものでない
+				print OUT "$line";
+			}
+			else{
+				print OUT "TER\n";	# 指定されたものならTERを
+			}
+		}
+	}
+	elsif(/^TER/i){
+		print OUT "TER\n";
+	}
+}
+close(IN);
+close(OUT);
+}
+
+# =============== resiueorder =============== #
+## 残基順序指定モード
+sub residueorder{
+my $resrange = shift(@_);
+my $in = shift(@_);
+my $out = shift(@_);
+
+my @resorder = &range($resrange);	# 範囲指定を分解
+
+my $check = pop(@resorder);
+if($check == -1){	# rangeルーチンで無限まで続くのなら-1が返されているはず
+	$check = pop(@resorder);
+}
+else{
+	push(@resorder, $check);	# 配列の最後を取り出したから元に戻す
+	$check = 0;
+}
+
+@resorder = sort {$a <=> $b} (@resorder);	# ソート
+
+my $find = 0;	# 指定された残基番号か？
+open(IN, "$in");
+open(OUT, "> $out");
+while(<IN>){
+	if((/^ATOM/i) || (/^HETATM/i)){
+		my $line = $_;
+		my $nowresorder = substr($_, 22, 4);	# 残基順序番号取得
+		$nowresorder =~ s/\s+//g;
+		if(($check != 0) && ($check <= $nowresorder)){
+			print OUT "TER\n";
+		}
+		else{
+			my $find = 0;
+			foreach(@resorder){	# 範囲内に現在の残基順序番号があるか
+				if($_ == $nowresorder){
+					$find = 1;
+					last;
+				}
+			}
+			if($find == 0){	# 指定されたものでない
+				print OUT "$line";
+			}
+			else{
+				print OUT "TER\n";	# 指定されたものならTERを
+			}
+		}
+	}
+	elsif(/^TER/i){
+		print OUT "TER\n";
+	}
+}
+close(IN);
+close(OUT);
+}
+
+# =============== unit =============== #
+## ユニット指定モード
+sub unit{
+my $unit = shift(@_);
+my $in = shift(@_);
+my $out = shift(@_);
+
+my @units = split(/,/, $unit);
+
+open(IN, "$in");
+open(OUT, "> $out");
+while(<IN>){
+	if((/^ATOM/i) || (/^HETATM/i)){
+		my $line = $_;
+		my $flag = 0;
+		my $nowunit = substr($_, 21, 1);	# ユニット名取得
+		foreach(@units){
+			if($nowunit eq $_){
+				$flag = 1;
+				last;
+			}
+		}
+		if($flag == 0){
+			print OUT $line;
+		}
+		else{
+			print OUT "TER\n";	# 消した後にはTERを
+		}
+	}
+	elsif(/^TER/){
+		print OUT "TER\n";
+	}
+}
+close(IN);
+close(OUT);
+}
+
+# =============== detailresidue =============== #
+## 詳細残基指定モード
+sub detailresidue{
+my $select = shift(@_);
+my $in = shift(@_);
+my $out = shift(@_);
+
+my @residues = split(/,/, $select);
+
+open(IN, "$in");
+open(OUT, "> $out");
+while(<IN>){
+	if((/^ATOM/i) || (/^HETATM/i)){
+		my $line = $_;
+		my $flag = 0;
+		my $nowdata = substr($line, 17, 9);
+		my $nowres = substr($nowdata, 0, 3);	# 残基名取得
+		$nowres =~ s/\s//g;
+		my $nowresnum = substr($nowdata, 5, 4);	# 残基番号取得
+		$nowresnum =~ s/\s//g;
+		foreach(@residues){
+			(my $checkres, my $checkresnum) = split(/\./, $_);
+			if(($nowres eq $checkres) && ($nowresnum == $checkresnum)){
+				$flag = 1;
+				last;
+			}
+		}
+		if($flag == 0){
+			print OUT $line;
+		}
+		else{
+			print OUT "TER\n";
+		}
+	}
+	elsif(/^TER/){
+		print OUT "TER\n";
+	}
+}
+close(IN);
+close(OUT);
+}
+
+# =============== terdel =============== #
+sub terdel{
+my $in = shift(@_);
+my $out = shift(@_);
+
+my $beforeline = "";
+my $flag = 0;
+open(IN, "$in");
+open(OUT, "> $out");
+while(<IN>){
+	my $line = $_;	# 現在行の改行とスペースを除去して，データを判別できる形にして$line1へ
+	if(($flag == 0) && ($line =~ /^TER/)){
+		next;
+	}
+	if($line ne $beforeline){	# 前の行と同じ（おそらく重複TER）でなかったら記述
+		print OUT $line;
+		$beforeline = $line;
+		$flag = 1;
+	}
+}
+close(IN);
+close(OUT);
+}
+
+# =============== cleanatom =============== #
+## 原子順序番号の正規化
+sub cleanatom{
+my $in = shift(@_);
+my $out = shift(@_);
+
+my $count = 0;
+open(IN, "$in");
+open(OUT, "> $out");
+while(<IN>){
+	if((/^ATOM/i) || (/^HETATM/)){
+		$count++;
+		my $line = &adjust1(5, $count);
+		substr($_, 6, 5) = $line;
+		print OUT;
+	}
+	else{
+		print OUT;
+	}
+}
+close(IN);
+close(OUT);
+}
+
+# =============== crecone =============== #
+sub crecone{
+my $in = shift(@_);
+my $out = shift(@_);
+my $d = shift(@_);
+
+my @arrayx = ();	# 対象原子のX座標
+my @arrayy = ();	# 対象原子のY座標
+my @arrayz = ();	# 対象原子のZ座標
+my @atom = ();		# 対象原子の原子順序番号
+my @atomname = ();	# 対象原子の原子名
+my @amino = ("SOL", "WAT", "HOH", "ACE", "ALA", "ARG", "ASN", "ASP", "ASH", "CYS", "CYM", "CYX", "GLN", "GLU", "GLH", "GLY", "HIS", "HIP", "HID", "HIE", "ILE", "LEU", "LYS", "MET", "NME", "PHE", "PRO", "SER", "THR", "TRP", "TYR", "VAL", "DA5", "DT5", "DG5", "DC5", "DA3", "DT3", "DG3", "DC3", "DA", "DT", "DG", "DC", "RA5", "RU5", "RG5", "RC5", "RA3", "RU3", "RG3", "RC3", "RA", "RU", "RG", "RC");
+	# 除外残基
+
+open(IN, "$in");
+open(OUT, "> $out");
+while(<IN>){
+	my $line = $_;
+	if(/^TER/i){
+		print OUT "TER\n";
+	}
+	elsif(/^END/i){
+		last;
+	}
+	elsif(/^CONECT/i){
+		next;
+	}
+	elsif((/^HETATM/i) || (/^ATOM/i)){
+		my $resc = substr($line, 17, 3);	# 残基情報取得
+		$resc =~ s/\s//g;
+		my $hantei = 1;
+		foreach(@amino){	# アミノ酸残基以外（非標準残基）はフラグを1（作業マーク）のままに
+			if($resc =~ /^$_$/i){
+				$hantei = 0;
+			}
+		}
+		if($hantei == 1){
+			my $x = substr($line, 30, 8);
+			$x =~ s/\s//g;
+			$x =~ s/\n//;
+			push(@arrayx, $x);	# 対象原子のX座標を格納
+			my $y = substr($line, 38, 8);
+			$y =~ s/\s//g;
+			$y =~ s/\n//;
+			push(@arrayy, $y);	# 対象原子のY座標を格納
+			my $z = substr($line, 46, 8);
+			$z =~ s/\s//g;
+			$z =~ s/\s//;
+			push(@arrayz, $z);	# 対象原子のZ座標を格納
+			$x = substr($line, 6, 5);
+			$x =~ s/\s//g;
+			$x =~ s/\n//;
+			push(@atom, $x);	# 対象原子の原子順序番号を格納
+			my $name = substr($line, 13, 1);
+			push(@atomname, $name);	# 対象原子の原子を格納
+		}
+		print OUT $line;
+	}
+}
+close(IN);
+
+my $targetcon = 0;	# 標的原子のループカウンタ
+my $othercon = 0;		# 比較対象原子のループカウンタ
+my $str = "";	# 出力用の接続する原子の原子順序番号
+foreach(@atom){
+	my $now = $_;	# 標的原子
+	my $x1 = $arrayx[$targetcon];	# 標的原子のX座標
+	my $y1 = $arrayy[$targetcon];	# 標的原子のY座標
+	my $z1 = $arrayz[$targetcon];	# 標的原子のZ座標
+	my $name1 = $atomname[$targetcon];	# 標的原子の原子
+	foreach(@atom){
+		my $x2 = $arrayx[$othercon];	# 比較対象原子のX座標
+		my $y2 = $arrayy[$othercon];	# 比較対象原子のY座標
+		my $z2 = $arrayz[$othercon];	# 比較対象原子のZ座標
+		my $name2 = $atomname[$othercon];	# 比較対象原子の原子
+		my $distance = ((($x2 - $x1) ** 2) + (($y2 - $y1) ** 2) + (($z2 - $z1) ** 2)) ** 0.5;
+			# 距離を演算
+		if($distance <= $d){	# 距離がこの範囲内だったら接続していると見なす
+			if((($name1 eq "H") || ($name2 eq "H")) && ($distance > 1.20)){
+				# ただし，水素原子との距離は1.20Åまでとする．
+				$othercon++;
+				next;
+			}
+			elsif($distance == 0){
+					# 0距離は自身であるのでスキップ
+				$othercon++;
+				next;
+			}
+			my $line = &adjust1(5, $_);
+			$str = $str . $line;	# 接続原子を出力用に
+		}
+		$othercon++;
+	}
+	$othercon = 0;
+	if($str !~ /^$/){
+		$now = &adjust1(5, $now);
+		print OUT "CONECT$now$str\n";	# 出力
+		$str = "";
+	}
+	$targetcon++;
+}
+print OUT "END\n";
+close(OUT);
+}
+
+# =============== range =============== #
+sub range{
+my $numarray = shift(@_);
+
+$numarray =~ s/\s//g;
+my @numarray1 = split(/,/, $numarray);
+my @numarray2 = ();
+my $count = 0;
+foreach(@numarray1){
+	if(/-/){
+		my @wide = split(/-/, $_);
+		if($wide[0] =~ /^$/){
+			$wide[0] = 1;
+		}
+		elsif($wide[1] =~ /^$/){
+			$numarray2[$count++] = $wide[0];
+			$numarray2[$count++] = -1;
+			last;
+		}
+		my $i = 0;
+		for($i = $wide[0]; $i <= $wide[1]; $i++){
+			$numarray2[$count++] = $i;
+		}
+	}
+	else{
+		$numarray2[$count++] = $_;
+	}
+}
+return(@numarray2);
+}
+
+# =============== adjust1 =============== #
+sub adjust1{
+my $max = shift(@_);	# 調整後文字数
+my $line = shift(@_);	# 文字列
+
+my $space = length($line);	# 文字列の長さ
+$space = $max - $space;		# 追加するスペース数
+$space = " " x $space;			# スペース
+$line = $space . $line;		# スペース追加
+return($line);
+}
+
+# =============== help =============== #
+sub help{
+print << "help";
+ PDB部分削除プログラム
+  *VIEWモード
+    \$ rashid --view 表示列数 入力ファイル
+  *情報表示モード
+    \$ rashid --information 入力ファイル
+  *原子指定削除
+    \$ rashid --atom 原子記号 入力ファイル 出力ファイル
+  *原子順序番号指定削除
+    \$ rashid --atomnumber 原子順序(範囲指定可能) 入力ファイル 出力ファイル
+  *残基順序番号指定削除
+    \$ rashid --residuenumber 残基順序(範囲指定可能) 入力ファイル 出力ファイル
+  *残基指定削除
+    \$ rashid --residue 残基名 入力ファイル 出力ファイル
+  *詳細原子指定削除
+    \$ rashid --detailatom 原子名 入力ファイル 出力ファイル
+  *詳細残基指定削除
+    \$ rashid --detailresidue 残基名.残基番号 入力ファイル 出力ファイル
+  *ユニット指定削除
+    \$ rashid --unit ユニット名 入力ファイル 出力ファイル
+     *** 入力ファイルの引数を入出力ファイルにすると上書き可能 ***
+help
+}
