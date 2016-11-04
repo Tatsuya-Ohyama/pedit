@@ -359,7 +359,7 @@ if __name__ == '__main__':
 	parser_view.set_defaults(func = "view")
 	parser_view.add_argument("input", metavar = "PDB", help = "input (*.pdb)")
 	parser_view.add_argument("-o", metavar = "PDB", dest = "output", help = "output (Default: STDIN)")
-	parser_view.add_argument("-O", action = "store_true", default = False, help = "overwrite forcibly")
+	parser_view.add_argument("-O", dest = "overwrite", action = "store_true", default = False, help = "overwrite forcibly")
 
 	parser_del = subparser.add_parser("del", help = "Delete atom", formatter_class=argparse.RawTextHelpFormatter)
 	parser_del.set_defaults(func = "del")
@@ -367,7 +367,7 @@ if __name__ == '__main__':
 	parser_del.add_argument("-t", dest = "targets", nargs = "+", help = "target objects\n  Ex:\n    R:1-20 (Residues 1-20)\n    R:WAT (Residue name of 'WAT')\n    A:-20 (Atoms 1-20)\n    A:H (Hydrogen atoms)")
 	parser_del.add_argument("-C", action = "store_true", dest = "flag_discone", help = "delete connections")
 	parser_del.add_argument("-o", metavar = "PDB", dest = "output", help = "output (Default: STDIN)")
-	parser_del.add_argument("-O", action = "store_true", default = False, help = "overwrite forcibly")
+	parser_del.add_argument("-O", dest = "overwrite", action = "store_true", default = False, help = "overwrite forcibly")
 
 	parser_reset = subparser.add_parser("reset", help = "Delete atom", formatter_class=argparse.RawTextHelpFormatter)
 	parser_reset.set_defaults(func = "reset")
@@ -376,7 +376,7 @@ if __name__ == '__main__':
 	parser_reset.add_argument("-A", dest = "flag_atom", action = "store_true", default = False, help = "renumbering atom order")
 	parser_reset.add_argument("-S", dest = "flag_reset", action = "store_true", default = False, help = "number set to '*' when number overflow\n(Default: reset number to 1)")
 	parser_reset.add_argument("-o", metavar = "PDB", dest = "output", help = "output (Default: STDIN)")
-	parser_reset.add_argument("-O", action = "store_true", default = False, help = "overwrite forcibly")
+	parser_reset.add_argument("-O", dest = "overwrite", action = "store_true", default = False, help = "overwrite forcibly")
 
 	args = parser.parse_args()
 
@@ -398,7 +398,8 @@ if __name__ == '__main__':
 			print(data)
 	else:
 		# ファイルに出力
-		check_overwrite(args.output)
+		if args.overwrite == False:
+			check_overwrite(args.output)
 		tempfile_name = ""
 		with tempfile.NamedTemporaryFile(mode = "w", prefix = "", delete = False) as obj_output:
 			tempfile_name = obj_output.name
