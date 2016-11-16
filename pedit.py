@@ -302,7 +302,6 @@ def reset_number(file, flag_atom, flag_residue, flag_reset):
 					if atom_number <= 99999:
 						# 範囲内の原子順序番号
 						atom_label = "%5d" % atom_number
-						atom_number += 1
 					else:
 						# 範囲外の場合
 						if flag_reset == True:
@@ -312,6 +311,7 @@ def reset_number(file, flag_atom, flag_residue, flag_reset):
 							# 番号をリセット
 							atom_number = 1
 							atom_label = "%5d" % atom_number
+					atom_number += 1
 				else:
 					atom_label = line[6:11]
 
@@ -322,7 +322,6 @@ def reset_number(file, flag_atom, flag_residue, flag_reset):
 						if residue_number <= 9999:
 							# 範囲内の残基番号
 							residue_label = "%4d" % residue_number
-							residue_number += 1
 						else:
 							# 範囲外の場合
 							if flag_reset == True:
@@ -332,6 +331,7 @@ def reset_number(file, flag_atom, flag_residue, flag_reset):
 								# 番号をリセット
 								residue_number = 1
 								residue_label = "%4d" % residue_number
+						residue_number += 1
 						prev_residue_info = residue_info
 				else:
 					residue_label = line[22:26]
