@@ -357,13 +357,13 @@ if __name__ == '__main__':
 
 	parser_view = subparser.add_parser("view", help = "Show PDB in display", formatter_class=argparse.RawTextHelpFormatter)
 	parser_view.set_defaults(func = "view")
-	parser_view.add_argument("input", metavar = "PDB", help = "input (*.pdb)")
+	parser_view.add_argument("-i", dest = "input", metavar = "PDB", required = True, help = "input (*.pdb)")
 	parser_view.add_argument("-o", metavar = "PDB", dest = "output", help = "output (Default: STDIN)")
 	parser_view.add_argument("-O", dest = "overwrite", action = "store_true", default = False, help = "overwrite forcibly")
 
 	parser_del = subparser.add_parser("del", help = "Delete atom", formatter_class=argparse.RawTextHelpFormatter)
 	parser_del.set_defaults(func = "del")
-	parser_del.add_argument("input", metavar = "PDB", help = "input (*.pdb)")
+	parser_del.add_argument("-i", dest = "input", metavar = "PDB", required = True, help = "input (*.pdb)")
 	parser_del.add_argument("-t", dest = "targets", nargs = "+", help = "target objects\n  Ex:\n    R:1-20 (Residues 1-20)\n    R:WAT (Residue name of 'WAT')\n    A:-20 (Atoms 1-20)\n    A:H (Hydrogen atoms)")
 	parser_del.add_argument("-C", action = "store_true", dest = "flag_discone", help = "delete connections")
 	parser_del.add_argument("-o", metavar = "PDB", dest = "output", help = "output (Default: STDIN)")
@@ -371,7 +371,7 @@ if __name__ == '__main__':
 
 	parser_reset = subparser.add_parser("reset", help = "Delete atom", formatter_class=argparse.RawTextHelpFormatter)
 	parser_reset.set_defaults(func = "reset")
-	parser_reset.add_argument("input", metavar = "PDB", help = "input (*.pdb)")
+	parser_reset.add_argument("-i", dest = "input", metavar = "PDB", required = True, help = "input (*.pdb)")
 	parser_reset.add_argument("-R", dest = "flag_residue", action = "store_true", default = False, help = "renumbering residue number")
 	parser_reset.add_argument("-A", dest = "flag_atom", action = "store_true", default = False, help = "renumbering atom order")
 	parser_reset.add_argument("-S", dest = "flag_reset", action = "store_true", default = False, help = "number set to '*' when number overflow\n(Default: reset number to 1)")
@@ -392,7 +392,7 @@ if __name__ == '__main__':
 
 
 	# 出力
-	if args.output == None:
+	if args.output is None:
 		# 標準出力に出力
 		for data in output:
 			print(data)
